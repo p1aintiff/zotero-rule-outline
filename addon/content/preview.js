@@ -1,6 +1,6 @@
 window.addEventListener('DOMContentLoaded', () => {
   const io = window.arguments[0];
-  const rows = io.result.headings.map(h => ({...h, selected: true}));
+  const rows = io.result.headings.map(h => ({...h, selected: /^\d/.test(h.title.normalize('NFKC').trim())}));
   const $ = id => document.getElementById(id);
   let writing = false, completed = false;
   $('filename').textContent = io.name;
