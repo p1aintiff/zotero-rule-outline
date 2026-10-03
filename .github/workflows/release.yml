@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const manifest = JSON.parse(fs.readFileSync('addon/manifest.json', 'utf8'));
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const version = manifest.version;
+          if (process.env.RELEASE_TAG !== `v${version}` || pkg.version !== version ||
+              lock.version !== version || lock.packages[''].version !== version) {
+            throw new Error('Release tag, manifest, package and lockfile versions must match');
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_ASSET=dist/zotero-rule-outline-${version}.xpi\n`);
+          NODE
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test -s "$RELEASE_ASSET"
+          args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" "$RELEASE_ASSET" \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --generate-notes \
+            "${args[@]}"

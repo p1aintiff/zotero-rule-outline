@@ -79,6 +79,25 @@ Windows 受限环境可追加 `--cache .npm-cache` 指定项目内 npm 缓存。
 
 清单限制为 Zotero 10.0–10.0.*。更新地址指向本仓库 `main` 分支的 `updates.json`，使用 Zotero JSON 更新清单格式。当前更新列表为空，需手动安装；发布后续版本时，将版本、已发布 XPI 的下载地址及兼容范围加入该清单，即可提供自动更新。
 
+## 发布到 GitHub Releases
+
+仓库的 `.github/workflows/release.yml` 在推送 `v*` 标签时自动运行：检查版本一致性、安装依赖、类型检查、构建 XPI、运行测试，全部通过后创建 GitHub Release 并上传对应版本的 `.xpi` 安装包。发布说明由 GitHub 自动生成；含 `-` 的版本标签会标为预发布。
+
+1. 确认当前分支和准备发布的提交。更新 `addon/manifest.json`、`package.json` 的版本，并运行 `npm install --package-lock-only` 同步锁文件版本；更新 README 中的版本和安装包说明。
+2. 运行 `npm ci`、`npm run typecheck`、`npm run build`、`npm test`，检查改动后提交，将工作流和版本改动推送到 GitHub。
+3. 在准备发布的提交上创建并推送标签。标签必须为 `v` 加清单版本，例如当前 `1.0.0`：
+
+   ```sh
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+4. 在仓库的 [Actions 页面](https://github.com/p1aintiff/zotero-rule-outline/actions) 查看执行结果，成功后从 [Releases 页面](https://github.com/p1aintiff/zotero-rule-outline/releases) 下载 XPI。普通代码推送不会创建 Release。
+
+工作流使用 GitHub 内置的 `GITHUB_TOKEN` 和 `contents: write` 权限，无需配置个人访问令牌。版本标签、插件清单、package.json 和锁文件的版本不一致时会停止发布。
+
+GitHub Release 发布后，如需让已安装插件通过 Zotero 自动更新，还需将新版本、Release 中 XPI 的下载地址和兼容范围加入 `updates.json`，并提交、推送到 `main`。发布工作流不会自动修改该更新清单。
+
 ## 许可与参考
 
 项目原创源码使用 MIT。PDF.js 使用 Apache-2.0，pdf-lib 及其依赖按各自许可分发，见 `addon/vendor/*LICENSE` 及字体/CMap 附带许可。当前插件不再包含 PyMuPDF/MuPDF。
