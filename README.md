@@ -1,10 +1,10 @@
-# Zotero Rule Outline 0.2.1
+# Zotero Rule Outline 1.0.0
 
 Zotero 10 的本地规则 PDF 大纲插件。使用 **PDF.js 5.4.624** 提取文本、字体和页面位置，使用 **pdf-lib 1.17.1** 写入标准 PDF Outline / Bookmarks。无需 Python、PyMuPDF、Node 运行环境或 API Key，不上传论文。
 
-安装包：`dist/zotero-rule-outline-0.2.1.xpi`，约 **2.1 MiB**。JavaScript 引擎、PDF.js 的中文 CMap、标准字体和依赖许可均已打包，安装后无需下载依赖。
+安装包：`dist/zotero-rule-outline-1.0.0.xpi`，约 **2.1 MiB**。JavaScript 引擎、PDF.js 的中文 CMap、标准字体和依赖许可均已打包，安装后无需下载依赖。
 
-0.2.1 将引擎脚本和字体/CMap 资源改用显式注册的 `chrome://` 地址，在主窗口注册菜单时预加载引擎。资源读取失败时显示重新安装并重启的提示，避免使用旧引擎导出。修复 Zotero IOUtils 与窗口 PDF 引擎的跨 JavaScript 环境字节数组兼容问题。
+1.0.0 根据跨页重复位置过滤页眉页脚，修复混合字号小数点导致的章节编号拆分，并排除纯符号候选。确认页默认仅勾选数字开头的标题。生成时保留原 PDF，在同目录创建带大纲副本，并自动注册为 Zotero 链接附件。
 
 ## 安装和使用
 
