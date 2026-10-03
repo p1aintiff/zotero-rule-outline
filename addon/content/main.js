@@ -72,10 +72,76 @@ var RuleOutline = {
     if (!item.isEditable()) throw new Error('此附件不可编辑。');
     const library = Zotero.Libraries.get(item.libraryID);
     if (library.filesEditable === false) throw new Error('此文献库没有文件编辑权限。');
-    if (library.libraryType === 'group') throw new Error('群组文献库不支持链接文件附件，请在个人文献库中生成大纲副本。');
     const path = await item.getFilePathAsync();
     if (!path || !await this.IO.exists(path)) throw new Error('PDF 尚未下载或文件不存在。');
     return {item, path};
+  },
+
+  async checkWritable(item, path) {
+    if (!this.alive) throw new Error('插件已关闭。');
+    if (!item.isEditable() || Zotero.Libraries.get(item.libraryID).filesEditable === false ||
+        await item.getFilePathAsync() !== path) throw new Error('附件权限或路径已变化，请重新生成。');
+    if (Zotero.Sync?.Runner?.syncInProgress) throw new Error('Zotero 正在同步，请等待同步完成后重试。');
+  },
+
+  async closeReaders(item, snapshots) {
+    const readers = Zotero.Reader._readers.filter(reader => reader.itemID === item.id && !reader._isTabClosed);
+    for (const reader of readers) {
+      const initDeadline = Date.now() + 15000;
+      while (!reader._internalReader) {
+        if (Date.now() > initDeadline) throw new Error('阅读器初始化超时，PDF 未修改。');
+        await Zotero.Promise.delay(50);
+      }
+      const internal = reader._internalReader;
+      const manager = internal?._annotationManager;
+      if (!manager?._unsavedAnnotations || typeof manager._triggerSaving !== 'function' ||
+          typeof internal.freeze !== 'function' || typeof internal.unfreeze !== 'function' || typeof reader._flushState !== 'function' ||
+          typeof reader._getState !== 'function' || typeof reader.close !== 'function') {
+        throw new Error('当前阅读器不支持安全保存和关闭，请手动关闭该 PDF 后重试。');
+      }
+      const skipDebounce = manager._skipAnnotationSavingDebounce;
+      let closed = false, saveError;
+      internal.freeze();
+      manager._skipAnnotationSavingDebounce = true;
+      try {
+        const deadline = Date.now() + 15000;
+        while (manager._unsavedAnnotations.size || manager._savingInProgress) {
+          if (Date.now() > deadline) throw new Error('等待批注保存超时，PDF 未修改。');
+          if (saveError) throw saveError;
+          if (!manager._savingInProgress) manager._triggerSaving().catch(error => { saveError = error; });
+          await Zotero.Promise.delay(50);
+        }
+        if (saveError) throw saveError;
+        if (internal._state.errorMessage) throw new Error('阅读器批注保存失败，PDF 未修改。');
+        await reader._flushState();
+        const state = await reader._getState();
+        const snapshot = {state, openInWindow: !reader.tabID, secondViewState: reader.getSecondViewState?.()};
+        await reader.close();
+        closed = true;
+        snapshots.push(snapshot);
+      } finally {
+        manager._skipAnnotationSavingDebounce = skipDebounce;
+        if (!closed) internal.unfreeze();
+      }
+    }
+    // ReaderTab.close() initiates closing; wait for Zotero to unregister it.
+    const deadline = Date.now() + 5000;
+    while (Zotero.Reader._readers.some(reader => reader.itemID === item.id && !reader._isTabClosed)) {
+      if (Date.now() > deadline) throw new Error('阅读器未能关闭，PDF 未修改。');
+      await Zotero.Promise.delay(50);
+    }
+  },
+
+  async reopenReaders(item, snapshots) {
+    const errors = [];
+    for (const snapshot of snapshots) {
+      try {
+        await Zotero.Reader.open(item.id, snapshot.state, {
+          openInWindow: snapshot.openInWindow, allowDuplicate: true, secondViewState: snapshot.secondViewState,
+        });
+      } catch(error) { errors.push(error.message || String(error)); }
+    }
+    return errors.length ? '阅读器恢复失败，请重新打开原附件：' + errors.join('；') : '';
   },
 
   async generate(win) {
@@ -90,26 +156,7 @@ var RuleOutline = {
     try { result = await this.run({action: 'scan', pdf: path}); }
     finally { this.busy = false; progress.close(); }
     if (!this.alive) return;
-    let outputPath, outputAttachment, registration;
-    const registerOutput = async () => {
-      if (!this.alive) throw new Error('插件已关闭。');
-      if (!outputPath) throw new Error('请先生成大纲副本。');
-      if (outputAttachment) return outputAttachment;
-      if (registration) return registration;
-      // Store the promise so repeated open clicks cannot create duplicate attachments.
-      const options = {file: outputPath, title: '带大纲版本', contentType: 'application/pdf'};
-      if (item.parentID) options.parentItemID = item.parentID;
-      else options.collections = item.getCollections();
-      registration = Zotero.Attachments.linkFromFile(options);
-      this.operations.add(registration);
-      try {
-        outputAttachment = await registration;
-        return outputAttachment;
-      } finally {
-        this.operations.delete(registration);
-        registration = undefined;
-      }
-    };
+    let completed = false;
     const io = {
       result,
       name: item.getField('title') || this.Path.filename(path),
@@ -117,25 +164,55 @@ var RuleOutline = {
         if (!this.alive) throw new Error('插件已关闭。');
         if (this.busy) throw new Error('正在处理另一份 PDF，请稍候。');
         // Recheck permissions/path after an arbitrarily long preview session.
-        if (!item.isEditable() || Zotero.Libraries.get(item.libraryID).filesEditable === false || await item.getFilePathAsync() !== path) throw new Error('附件权限或路径已变化，请重新生成。');
+        await this.checkWritable(item, path);
+        if (this.busy) throw new Error('正在处理另一份 PDF，请稍候。');
         this.busy = true;
+        const snapshots = [];
+        let written, failure, resumeSync;
         try {
-          const written = await this.run({action: 'apply', pdf: path, sha256: result.sha256, headings, overwrite});
-          outputPath = written.output;
-          try {
-            const attachment = await registerOutput();
-            written.attachmentID = attachment.id;
-          } catch (error) {
-            // The valid PDF already exists. Keep it and allow registration to be retried.
-            Zotero.logError(error);
-            written.warning = '副本已保存，但自动添加链接附件失败。点击“打开新 PDF”重试，或手动添加该文件。';
+          if (typeof Zotero.Sync?.Runner?.delayIndefinite !== 'function') throw new Error('无法暂缓 Zotero 同步，PDF 未修改。');
+          resumeSync = Zotero.Sync.Runner.delayIndefinite();
+          await this.closeReaders(item, snapshots);
+          const stored = item.isStoredFileAttachment();
+          const previousSyncState = item.attachmentSyncState;
+          if (stored && typeof Zotero.Sync?.Storage?.Local?.SYNC_STATE_TO_UPLOAD !== 'number') {
+            throw new Error('无法访问 Zotero 文件同步接口，PDF 未修改。');
           }
-          return written;
-        } finally { this.busy = false; }
+          written = await this.run({action: 'apply', pdf: path, sha256: result.sha256, headings, overwrite}, {
+            beforeReplace: async () => {
+              await this.checkWritable(item, path);
+              if (Zotero.Reader._readers.some(reader => reader.itemID === item.id && !reader._isTabClosed)) {
+                throw new Error('PDF 阅读器已重新打开，请关闭后重试。');
+              }
+            },
+            afterReplace: async () => {
+              if (stored) {
+                item.attachmentSyncState = Zotero.Sync.Storage.Local.SYNC_STATE_TO_UPLOAD;
+                try { await item.saveTx(); }
+                catch(error) { item.attachmentSyncState = previousSyncState; throw error; }
+              }
+            },
+          });
+          completed = true;
+          written.attachmentID = item.id;
+        } catch(error) { failure = error; }
+        finally {
+          const warning = await this.reopenReaders(item, snapshots);
+          resumeSync?.();
+          this.busy = false;
+          if (written && warning) written.warning = [written.warning, warning].filter(Boolean).join('\n');
+          if (failure && warning) failure = new Error((failure.message || String(failure)) + '\n' + warning);
+        }
+        if (failure) throw failure;
+        if (item.isStoredFileAttachment()) {
+          try { Zotero.Sync.Runner.setSyncTimeout(1); }
+          catch(error) { written.warning = [written.warning, '已标记待上传；请手动同步。'].filter(Boolean).join('\n'); }
+        }
+        return written;
       },
       open: async () => {
-        const attachment = await registerOutput();
-        await Zotero.Reader.open(attachment.id);
+        if (!completed) throw new Error('请先写入大纲。');
+        await Zotero.Reader.open(item.id);
       },
     };
     const dialog = win.openDialog('chrome://rule-outline/content/preview.xhtml', '', 'chrome,centerscreen,resizable,width=1000,height=720', io);
@@ -160,13 +237,13 @@ var RuleOutline = {
     return service;
   },
 
-  async run(request) {
+  async run(request, hooks) {
     if (!this.alive) throw new Error('插件已关闭。');
     const win = [...this.windows.keys()].find(w => !w.closed);
     if (!win) throw new Error('请打开 Zotero 主窗口后重试。');
     if (this.engineErrors.has(win)) throw this.engineErrors.get(win);
     const service = this.initializeEngine(win);
-    const operation = service.run(request);
+    const operation = service.run(request, hooks);
     this.operations.add(operation);
     try { return await operation; }
     finally { this.operations.delete(operation); }

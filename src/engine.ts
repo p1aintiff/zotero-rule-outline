@@ -59,6 +59,7 @@ export interface FileAccess {
 }
 export interface Paths {join(...parts:string[]):string; filename(path:string):string}
 export interface Request {action:string;pdf:string;sha256?:string;headings?:OutlineHeading[];overwrite?:boolean}
+export interface WriteHooks {beforeReplace?:()=>Promise<void>; afterReplace?:()=>Promise<void>}
 
 export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>crypto.randomUUID()) {
   const unchanged = async (path:string, hash:string, message:string) => {
@@ -71,7 +72,7 @@ export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>
     try { return await fn(); }
     finally { await IO.remove(lock,{ignoreAbsent:true}); }
   };
-  const apply = (request:Request) => locked(request.pdf,async()=>{
+  const apply = (request:Request, hooks:WriteHooks = {}) => locked(request.pdf,async()=>{
     const original=await IO.read(request.pdf), before=await sha256(original);
     if (before!==request.sha256) throw new Error('PDF 自预览后已变化，请重新生成。');
     const headings=request.headings!;
@@ -86,36 +87,65 @@ export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>
     const after=await sha256(rewritten);
     const filename=Path.filename(request.pdf);
     const directory=request.pdf.slice(0,request.pdf.length-filename.length);
-    const stem=filename.replace(/\.pdf$/i,'');
-    const tmpPath=Path.join(directory,stem+'.rule-outline-'+uuid()+'.tmp');
-    let created=false;
+    const token=uuid();
+    const backupPath=Path.join(directory,filename+'.rule-outline-'+token+'.bak');
+    const tmpPath=Path.join(directory,filename+'.rule-outline-'+token+'.tmp');
+    let backupCreated=false, tempCreated=false, replaced=false, publishAttempted=false, preserveBackup=false;
+    let warning='';
     try {
-      // Copy the source into a private sibling file, then write only to that copy.
-      await IO.write(tmpPath,original,{mode:'create',flush:true});
-      created=true;
-      await unchanged(tmpPath,before,'副本校验失败，原文件未修改。');
-      await IO.write(tmpPath,rewritten,{flush:true});
+      backupCreated=true;
+      await IO.write(backupPath,original,{mode:'create',flush:true});
+      await unchanged(backupPath,before,'临时备份校验失败，原文件未修改。');
+      tempCreated=true;
+      await IO.write(tmpPath,rewritten,{mode:'create',flush:true});
       await unchanged(tmpPath,after,'新文件校验失败，原文件未修改。');
-      for(let index=1;index<=1000;index++) {
-        const output=Path.join(directory,stem+'-大纲'+(index===1?'':`-${index}`)+'.pdf');
-        if(await IO.exists(output)) continue;
-        await unchanged(request.pdf,before,'生成副本前 PDF 已变化，操作取消。');
-        try { await IO.move(tmpPath,output,{noOverwrite:true}); }
-        catch(error) {
-          // Another process may create the destination after the existence check.
-          if(await IO.exists(output)) continue;
-          throw error;
-        }
-        return {count:headings.length,output,sha256:after};
+      await hooks.beforeReplace?.();
+      await unchanged(request.pdf,before,'替换前 PDF 已变化，操作取消。');
+      // Publish a fully verified file; never truncate the original in place.
+      publishAttempted=true;
+      await IO.move(tmpPath,request.pdf);
+      replaced=true;
+      await unchanged(request.pdf,after,'写入后的文件校验失败。');
+      await hooks.afterReplace?.();
+    } catch(error) {
+      if(publishAttempted && !replaced) {
+        // A filesystem API may reject after publishing. Recover only our own
+        // bytes; retain the backup if the destination is missing or unexpected.
+        preserveBackup=true;
+        try {
+          if(await IO.exists(request.pdf)) {
+            const current=await sha256(await IO.read(request.pdf));
+            if(current===after) {replaced=true;preserveBackup=false;}
+            else if(current===before)preserveBackup=false;
+          }
+        } catch { /* An unreadable destination must not discard the backup. */ }
+        if(preserveBackup) throw new Error(`${(error as Error).message}\n原件临时备份保留在：${backupPath}`);
       }
-      throw new Error('同目录的大纲副本过多，请整理文件后重试。');
+      if(replaced) {
+        try {
+          // Do not overwrite a newer file saved by an external editor.
+          await unchanged(request.pdf,after,'写入后检测到外部修改，不能自动恢复。');
+          await IO.write(tmpPath,original,{flush:true});
+          await IO.move(tmpPath,request.pdf);
+          await unchanged(request.pdf,before,'恢复原文件校验失败。');
+        } catch(restoreError) {
+          preserveBackup=true;
+          throw new Error(`${(error as Error).message}\n恢复失败：${(restoreError as Error).message}\n原件临时备份保留在：${backupPath}`);
+        }
+      }
+      throw error;
     } finally {
-      if(created) await IO.remove(tmpPath,{ignoreAbsent:true});
+      for(const file of [tempCreated ? tmpPath : '', backupCreated && !preserveBackup ? backupPath : '']) {
+        if(!file)continue;
+        try {await IO.remove(file,{ignoreAbsent:true});}
+        catch {warning+=`临时文件清理失败，请手动删除：${file}\n`;}
+      }
     }
+    return {count:headings.length,output:request.pdf,sha256:after,warning};
   });
-  return {run: async (request:Request) => {
+  return {run: async (request:Request, hooks?:WriteHooks) => {
     if (request.action==='scan') return scan(await IO.read(request.pdf),assetBase);
-    if (request.action==='apply') return apply(request);
+    if (request.action==='apply') return apply(request,hooks);
     throw new Error('未知操作。');
   }};
 }

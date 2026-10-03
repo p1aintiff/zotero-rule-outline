@@ -42,6 +42,14 @@ export async function writeOutline(data: Uint8Array, headings: OutlineHeading[],
   assertUnsigned(pdf);
   validateHeadings(headings, pdf.getPageCount());
   if (pdf.catalog.has(PDFName.of('Outlines')) && !overwrite) throw new Error('PDF 已有大纲，请明确允许替换。');
+  // Every original indirect object (including annotation appearances and page
+  // contents) must survive unchanged. Only the catalog's outline settings change.
+  const preserved = pdf.context.enumerateIndirectObjects()
+    .filter(([, object]) => object !== pdf.catalog)
+    .map(([ref, object]) => ({ref, value:object.toString()}));
+  const catalog = pdf.catalog.entries()
+    .filter(([key]) => !['/Outlines','/PageMode'].includes(key.toString()))
+    .map(([key, value]) => ({key, value:value.toString()}));
   const context = pdf.context;
   const root = context.obj({Type: 'Outlines'});
   const rootRef = context.register(root);
@@ -75,5 +83,11 @@ export async function writeOutline(data: Uint8Array, headings: OutlineHeading[],
   link(tree);
   pdf.catalog.set(PDFName.of('Outlines'), rootRef);
   pdf.catalog.set(PDFName.of('PageMode'), PDFName.of('UseOutlines'));
-  return pdf.save({useObjectStreams: false, updateFieldAppearances: false});
+  const bytes = await pdf.save({useObjectStreams: false, updateFieldAppearances: false});
+  const saved = await openPDF(bytes);
+  if (preserved.some(({ref,value}) => saved.context.lookup(ref)?.toString() !== value) ||
+      catalog.some(({key,value}) => saved.catalog.get(key)?.toString() !== value)) {
+    throw new Error('PDF 页面、批注或原始对象保留校验失败，原文件未修改。');
+  }
+  return bytes;
 }

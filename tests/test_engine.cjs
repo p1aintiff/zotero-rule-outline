@@ -83,70 +83,93 @@ test('writes Unicode nested outlines, preserves annotations and crop/rotation de
   await assert.rejects(api.writeOutline(bytes,rows,false),/已有大纲/);await api.writeOutline(bytes,rows,true);
   for(const bad of [[{title:'x',level:2,page:1}],[{title:'',level:1,page:1}],[{title:'x',level:1,page:9}]]) await assert.rejects(api.writeOutline(original,bad,false));
 });
-test('writes sibling copies, preserves source bytes and avoids existing output names',async()=>{
-  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-js-'));
+
+test('replaces the original PDF and removes temporary backup and staging files',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-replace-'));
   try{
     const pdf=path.join(directory,'中文 论文.pdf'),original=await fixture();await fs.writeFile(pdf,original);
     const service=api.createService(fileIO(),{join:path.join,filename:path.basename},assetBase);
     const scanned=await service.run({action:'scan',pdf});
-    const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings,overwrite:false},result=await service.run(request);
-    assert.equal(result.output,path.join(directory,'中文 论文-大纲.pdf'));
-    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
-    const written=await fs.readFile(result.output);
-    assert.equal(await api.sha256(new Uint8Array(written)),result.sha256);
-    assert.equal((await api.inspectOutline(new Uint8Array(written),assetBase)).headings.length,scanned.headings.length);
-    const second=await service.run(request);
-    assert.equal(second.output,path.join(directory,'中文 论文-大纲-2.pdf'));
-    assert.deepEqual(await fs.readFile(result.output),written);
-    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
-    assert.deepEqual((await fs.readdir(directory)).sort(),['中文 论文-大纲-2.pdf','中文 论文-大纲.pdf','中文 论文.pdf'].sort());
-    await fs.appendFile(pdf,'modified');
+    const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings};
+    let checked=false;
+    const result=await service.run(request,{beforeReplace:async()=>{
+      const backup=(await fs.readdir(directory)).find(name=>name.endsWith('.bak'));
+      assert.ok(backup);assert.deepEqual(await fs.readFile(path.join(directory,backup)),Buffer.from(original));checked=true;
+    }});
+    assert.ok(checked);assert.equal(result.output,pdf);
+    const written=new Uint8Array(await fs.readFile(pdf));
+    assert.equal(await api.sha256(written),result.sha256);
+    assert.equal((await api.inspectOutline(written,assetBase)).headings.length,scanned.headings.length);
+    assert.deepEqual(await fs.readdir(directory),['中文 论文.pdf']);
     await assert.rejects(service.run(request),/自预览后已变化/);
-    await fs.writeFile(pdf,original);
+    const updated=await service.run({action:'scan',pdf});
+    await service.run({...request,sha256:updated.sha256,overwrite:true});
+    assert.deepEqual(await fs.readdir(directory),['中文 论文.pdf']);
     await fs.writeFile(pdf+'.rule-outline.lock','lock');await assert.rejects(service.run(request),/互斥锁/);
   }finally{await fs.rm(directory,{recursive:true,force:true});}
 });
 
-test('copy failures and late source changes leave no output or temporary files',async()=>{
-  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-copy-fail-'));
+test('failed staging, replacement and permission checks preserve the original; failed sync rolls back',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-replace-fail-'));
   try{
-    const pdf=path.join(directory,'paper.pdf'),original=await fixture();await fs.writeFile(pdf,original);
-    const io=fileIO(),paths={join:path.join,filename:path.basename};
-    const scanned=await api.scan(original,assetBase);
-    const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings};
-    for(const phase of ['write','move','corrupt','source']) {
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture(),io=fileIO();
+    const scanned=await api.scan(original,assetBase),request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings};
+    for(const phase of ['backup','write','corrupt','move','source','permission','sync']) {
+      await fs.writeFile(pdf,original);
       const simulated={...io,
         write:async(p,data,options)=>{
-          if(p.endsWith('.tmp')&&options?.mode!=='create') {
-            if(phase==='write'){await io.write(p,new Uint8Array([1]));throw new Error('simulated write failure');}
-            if(phase==='corrupt')return io.write(p,new Uint8Array([1]));
-            if(phase==='source')await fs.appendFile(pdf,'modified');
-          }
+          if((phase==='backup'&&p.endsWith('.bak'))||(phase==='write'&&p.endsWith('.tmp'))){await io.write(p,new Uint8Array([1]),options);throw new Error('simulated write failure');}
+          if(phase==='corrupt'&&p.endsWith('.tmp'))return io.write(p,new Uint8Array([1]),options);
           return io.write(p,data,options);
         },
         move:async(...args)=>{if(phase==='move')throw new Error('simulated move failure');return io.move(...args);},
       };
-      await assert.rejects(api.createService(simulated,paths,assetBase).run(request),/simulated|校验失败|已变化/);
+      const hooks={beforeReplace:async()=>{
+        if(phase==='source')await fs.appendFile(pdf,'external');
+        if(phase==='permission')throw new Error('simulated permission failure');
+      },afterReplace:async()=>{if(phase==='sync')throw new Error('simulated sync failure');}};
+      await assert.rejects(api.createService(simulated,{join:path.join,filename:path.basename},assetBase).run(request,hooks),/simulated|校验失败|已变化/);
       assert.deepEqual(await fs.readdir(directory),['paper.pdf']);
-      assert.deepEqual(await fs.readFile(pdf),phase==='source'?Buffer.concat([Buffer.from(original),Buffer.from('modified')]):Buffer.from(original));
-      await fs.writeFile(pdf,original);
+      assert.deepEqual(await fs.readFile(pdf),phase==='source'?Buffer.concat([Buffer.from(original),Buffer.from('external')]):Buffer.from(original));
     }
   }finally{await fs.rm(directory,{recursive:true,force:true});}
 });
 
-test('a destination created during publication is preserved and gets a numbered alternative',async()=>{
-  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-copy-race-'));
+test('rollback failure retains a recoverable backup; external post-write changes are not overwritten',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-rollback-'));
   try{
-    const pdf=path.join(directory,'paper.PDF'),original=await fixture();await fs.writeFile(pdf,original);
-    const scanned=await api.scan(original,assetBase),io=fileIO();let raced=false;
-    const simulated={...io,move:async(source,destination,options)=>{
-      assert.equal(options.noOverwrite,true);
-      if(!raced){raced=true;await fs.writeFile(destination,'external file');}
-      return io.move(source,destination,options);
-    }};
-    const result=await api.createService(simulated,{join:path.join,filename:path.basename},assetBase).run({action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings});
-    assert.equal(path.basename(result.output),'paper-大纲-2.pdf');
-    assert.equal(await fs.readFile(path.join(directory,'paper-大纲.pdf'),'utf8'),'external file');
-    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture(),io=fileIO();
+    const scanned=await api.scan(original,assetBase),request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings};
+    for(const phase of ['restore','external']){
+      await fs.writeFile(pdf,original);
+      let moves=0;
+      const simulated={...io,move:async(source,...args)=>{
+        moves++;
+        if(phase==='restore'&&moves===2)throw new Error('simulated restore failure');
+        return io.move(source,...args);
+      }};
+      await assert.rejects(api.createService(simulated,{join:path.join,filename:path.basename},assetBase).run(request,{afterReplace:async()=>{
+        if(phase==='external')await fs.writeFile(pdf,'external newer PDF');
+        throw new Error('simulated sync failure');
+      }}),/原件临时备份保留在/);
+      const names=await fs.readdir(directory),backup=names.find(n=>n.endsWith('.bak'));
+      assert.ok(backup);assert.equal(names.length,2);
+      assert.deepEqual(await fs.readFile(path.join(directory,backup)),Buffer.from(original));
+      if(phase==='external')assert.equal(await fs.readFile(pdf,'utf8'),'external newer PDF');
+      await fs.unlink(path.join(directory,backup));
+    }
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+
+test('an unreadable destination after replacement failure retains the original backup',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-unreadable-'));
+  try{
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture(),io=fileIO();await fs.writeFile(pdf,original);
+    const scanned=await api.scan(original,assetBase);let attempted=false;
+    const simulated={...io,move:async()=>{attempted=true;throw new Error('simulated replacement failure');},
+      read:async p=>{if(attempted&&p===pdf)throw new Error('simulated read failure');return io.read(p);}};
+    await assert.rejects(api.createService(simulated,{join:path.join,filename:path.basename},assetBase).run({action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings}),/原件临时备份保留在/);
+    const backup=(await fs.readdir(directory)).find(n=>n.endsWith('.bak'));
+    assert.ok(backup);assert.deepEqual(await fs.readFile(path.join(directory,backup)),Buffer.from(original));
   }finally{await fs.rm(directory,{recursive:true,force:true});}
 });

@@ -55,11 +55,11 @@ window.addEventListener('DOMContentLoaded', () => {
       const headings = RuleOutlineEditor.selectedHeadings(rows, io.result.pages);
       writing = true; update();
       for (const control of document.querySelectorAll('input, select, button')) control.disabled = true;
-      $('status').className = ''; $('status').textContent = '正在创建副本并写入大纲…';
+      $('status').className = ''; $('status').textContent = '正在保存批注、临时备份并写入大纲…';
       const result = await io.apply(headings, $('overwrite').checked);
       completed = true;
-      $('status').textContent = `已在新文件中写入 ${result.count} 个书签：${result.output}` +
-        (result.warning ? '\n' + result.warning : '\n已添加“带大纲版本”链接附件。');
+      $('status').textContent = `已在原 PDF 中写入 ${result.count} 个书签。` +
+        (result.warning ? '\n' + result.warning : '\n临时备份已清理，保留原附件及其批注。');
       $('status').className = result.warning ? 'error' : 'success';
       $('write').hidden = true; $('open').hidden = false;
     } catch (error) {
