@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero Rule Outline",
+  "version": "0.2.1",
+  "description": "本地规则生成中文 PDF 大纲，支持预览编辑、备份与恢复。",
+  "author": "Rule Outline Contributors",
+  "applications": {
+    "zotero": {
+      "id": "rule-outline@local.zotero",
+      "strict_min_version": "10.0",
+      "strict_max_version": "10.0.*",
+      "update_url": "https://zotero.sunlite.top/zfo.xpi"
+    }
+  }
+}

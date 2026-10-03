@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN">
+<head>
+  <meta charset="UTF-8"/>
+  <title>PDF 大纲预览</title>
+  <link rel="stylesheet" href="preview.css"/>
+  <script src="editor.js" defer="defer"></script>
+  <script src="preview.js" defer="defer"></script>
+</head>
+<body>
+  <header><span class="eyebrow">ZOTERO RULE OUTLINE</span><h1>检查 PDF 大纲</h1><p id="filename"></p></header>
+  <section class="summary"><strong id="count"></strong><span id="baseline"></span><button id="all" type="button">全选</button><button id="none" type="button">全不选</button></section>
+  <p class="hint">取消勾选可排除误判；可编辑标题、层级和页码，↑↓ 调整同页顺序。写入前请关闭这份 PDF 的阅读器。</p>
+  <div class="table-wrap"><table><thead><tr><th>选择</th><th>标题</th><th>层级</th><th>页码</th><th>得分 / 依据</th><th>顺序</th></tr></thead><tbody id="rows"></tbody></table></div>
+  <div id="existing" class="existing" hidden="hidden"><label><input id="overwrite" type="checkbox"/>允许替换 PDF 已有大纲（默认保留）</label><span id="existing-count"></span></div>
+  <p id="status" role="status" aria-live="polite"></p>
+  <footer><span>本地处理 · 写入前备份 · 原文件变化时停止写入</span><button id="cancel" type="button">关闭</button><button id="write" class="primary" type="button">写入 PDF</button><button id="open" class="primary" type="button" hidden="hidden">打开 PDF</button></footer>
+</body>
+</html>

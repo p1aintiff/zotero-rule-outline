@@ -1,0 +1,19 @@
+{
+  "name": "zotero-rule-outline",
+  "version": "0.2.1",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.cjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "5.4.624"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "typescript": "5.9.3"
+  }
+}

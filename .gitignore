@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+dist/
+**/__pycache__/
+.qa-zotero/
+.qa-zotero-runtime/
+/*.xpi
+addon/content/engine.js
+addon/vendor/
