@@ -1,7 +1,19 @@
 {
   "addons": {
     "rule-outline@local.zotero": {
-      "updates": []
+      "updates": [
+        {
+          "version": "1.0.1",
+          "update_link": "https://github.com/p1aintiff/zotero-rule-outline/releases/download/v1.0.1/zotero-rule-outline-1.0.1.xpi",
+          "update_hash": "sha256:997ecd2ed0ee24e678d4f345730c4aa3df6d4068b53657239189a2a1bdcddbf3",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "10.0",
+              "strict_max_version": "10.0.*"
+            }
+          }
+        }
+      ]
     }
   }
 }

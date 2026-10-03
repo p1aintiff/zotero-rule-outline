@@ -79,7 +79,7 @@ Windows 受限环境可追加 `--cache .npm-cache` 指定项目内 npm 缓存。
 
 本机 Zotero 运行时检查：设置 `ZOTERO_EXECUTABLE` 为可执行文件路径，运行 `node scripts/check_zotero.cjs`。它只使用项目内 `.qa-zotero-runtime/` 隔离配置和测试数据，不读取或修改用户文献库；结果保存在该目录的 `report.json`。此可选检查需桌面程序正常运行所需的系统权限。
 
-清单限制为 Zotero 10.0–10.0.*。更新地址指向本仓库 `main` 分支的 `updates.json`，使用 Zotero JSON 更新清单格式。当前更新列表为空，需手动安装；发布后续版本时，将版本、已发布 XPI 的下载地址及兼容范围加入该清单，即可提供自动更新。
+清单限制为 Zotero 10.0–10.0.*。更新地址指向本仓库 `main` 分支的 `updates.json`，使用 Zotero JSON 更新清单格式。更新清单已包含 1.0.1 的下载地址、SHA-256 及兼容范围，旧版可通过 Zotero 插件管理器检查更新。后续发布成功后需同步维护该清单。
 
 ## 发布到 GitHub Releases
 
