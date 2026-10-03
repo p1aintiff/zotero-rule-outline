@@ -41,7 +41,7 @@ async function startup(){
     result.menu=!!host.document.getElementById('rule-outline-generate');
     if(!result.menu)throw new Error('Plugin menu not registered');
     const before=await IOUtils.read(${JSON.stringify(path.join(profile,'paper.pdf'))});
-    const scan=await service.run({action:'scan',pdf:${JSON.stringify(path.join(profile,'paper.pdf'))},threshold:7});
+    const scan=await service.run({action:'scan',pdf:${JSON.stringify(path.join(profile,'paper.pdf'))}});
     result.pages=scan.pages;result.titles=scan.headings.map(h=>h.title);
     const written=await service.run({action:'apply',pdf:${JSON.stringify(path.join(profile,'paper.pdf'))},sha256:scan.sha256,headings:scan.headings});
     result.written=written.count;

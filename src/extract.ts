@@ -281,7 +281,7 @@ export async function extractLines(
     spans.sort((a, b) => {
       const dy = b.y - a.y;
 
-      if (Math.abs(dy) > 2) {
+      if (Math.abs(dy) > Math.max(a.fontSize, b.fontSize) * 0.35) {
         return dy;
       }
 
@@ -296,8 +296,8 @@ export async function extractLines(
 
       if (
         last &&
-        sameLine(last[0], span) &&
-        span.x - Math.max(...last.map(s => s.x + s.width)) < Math.max(span.fontSize * 4, viewport.width * 0.06)
+        sameLine(last[0], span) && last[0].fontSize === span.fontSize &&
+        span.x - Math.max(...last.map(s => s.x + s.width)) < Math.max(span.fontSize * 1.5, viewport.width * 0.02)
       ) {
         last.push(span);
       } else {
@@ -318,7 +318,7 @@ export async function extractLines(
         .filter(line => line.text);
 
     detectColumns(pageLines);
-    // 计算同栏上下间距，避免另一栏影响标题评分。
+    // 保留同栏上下间距供提取结果检查。
     for (let i = 0; i < pageLines.length; i++) {
       const current = pageLines[i];
 

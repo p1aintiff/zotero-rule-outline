@@ -7,28 +7,41 @@ test('accepts typed arrays from another JavaScript realm, including nonzero-offs
   const data=await fixture();
   const foreign=require('node:vm').runInNewContext('const bytes=new Uint8Array(input.length+16);bytes.set(input,8);bytes.subarray(8,8+input.length)',{input:[...data]});
   assert.equal(foreign instanceof Uint8Array,false);
-  assert.equal((await api.scan(foreign,7,assetBase)).pages,3);
+  assert.equal((await api.scan(foreign,assetBase)).pages,3);
   const updated=await api.writeOutline(foreign,[{title:'跨环境标题',level:1,page:1,y:80}],false);
   assert.equal((await api.inspectOutline(updated,assetBase)).headings[0].title,'跨环境标题');
 });
-test('PDF.js scans Chinese headings, filters margins and captions, infers hierarchy',async()=>{
-  const {api,assetBase}=await loaded,result=await api.scan(await fixture(),7,assetBase);
+test('PDF.js scans larger-font Chinese headings and captions, infers font hierarchy',async()=>{
+  const {api,assetBase}=await loaded,result=await api.scan(await fixture(),assetBase);
   assert.equal(result.pages,3);assert.equal(result.context.body_font_size,10.5);
   assert.ok(result.headings.some(h=>h.title==='第一章 绪论'));
   assert.ok(result.headings.some(h=>h.title==='一、研究背景'&&h.level===2));
-  assert.ok(result.headings.every(h=>!h.title.includes('Journal')&&!h.title.includes('Figure')));
+  assert.ok(result.headings.every(h=>!h.title.includes('Journal')));
+  assert.ok(result.headings.some(h=>h.title.includes('Figure')));
   assert.ok(result.headings[0].y>0&&result.headings[0].y<150);
   const extracted=await api.extractLines(await fixture(),assetBase);
   assert.equal(extracted.lines.find(l=>l.text.includes('Figure')).bold,true);
-  assert.ok((await api.scan(await fixture(),15,assetBase)).headings.length<result.headings.length);
 });
 test('separates columns and rejects PDFs without text, signed or invalid PDFs',async()=>{
-  const {api,assetBase}=await loaded,result=await api.scan(await fixture({columns:true}),7,assetBase);
+  const {api,assetBase}=await loaded,result=await api.scan(await fixture({columns:true}),assetBase);
   assert.ok(result.headings.some(h=>h.title.includes('左栏研究方法')&&!h.title.includes('右栏')));
   assert.ok(result.headings.some(h=>h.title.includes('右栏研究结果')&&!h.title.includes('左栏')));
-  await assert.rejects(api.scan(await fixture({blank:true}),7,assetBase),/OCR/);
-  await assert.rejects(api.scan(await fixture({signed:true}),7,assetBase),/数字签名/);
-  await assert.rejects(api.scan(new Uint8Array([1,2,3]),7,assetBase),/无法读取/);
+  await assert.rejects(api.scan(await fixture({blank:true}),assetBase),/OCR/);
+  await assert.rejects(api.scan(await fixture({signed:true}),assetBase),/数字签名/);
+  await assert.rejects(api.scan(new Uint8Array([1,2,3]),assetBase),/无法读取/);
+});
+test('keeps a larger heading separate from opposite-column body on the same baseline',async()=>{
+  const {api,assetBase}=await loaded,pdf=await PDFDocument.create();
+  const font=await pdf.embedFont(require('pdf-lib').StandardFonts.Helvetica),page=pdf.addPage([595,842]);
+  page.drawText('Body text on the left side.',{x:50,y:700,size:9.7,font});
+  page.drawText('1 Related research',{x:260,y:701.5,size:11.2,font});
+  for(let i=0;i<8;i++)page.drawText('Most text is body text at this font size.',{x:50,y:670-i*20,size:9.7,font});
+  page.drawText('4.1 Conclusion',{x:50,y:450,size:9.7,font});
+  page.drawText('Opposite-column body text.',{x:315,y:452.5,size:9.7,font});
+  const result=await api.scan(await pdf.save(),assetBase);
+  assert.equal(result.context.body_font_size,9.7);
+  assert.deepEqual(Array.from(result.headings,h=>h.title),['1 Related research','4.1 Conclusion']);
+  assert.equal(result.headings[0].font_size,11.2);
 });
 test('writes Unicode nested outlines, preserves annotations and crop/rotation destinations',async()=>{
   const {api,assetBase}=await loaded,original=await fixture({rotated:true}),doc=await PDFDocument.load(original);
@@ -51,7 +64,7 @@ test('backs up, validates changes, restores byte-for-byte and rejects tampering 
   try{
     const pdf=path.join(directory,'中文 论文.pdf'),original=await fixture();await fs.writeFile(pdf,original);
     const service=api.createService(fileIO(),{join:path.join,filename:path.basename},assetBase);
-    const scanned=await service.run({action:'scan',pdf,threshold:7});
+    const scanned=await service.run({action:'scan',pdf});
     const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings,overwrite:false},result=await service.run(request);
     assert.deepEqual(await fs.readFile(result.backup),Buffer.from(original));
     await assert.rejects(service.run(request),/自预览后已变化/);

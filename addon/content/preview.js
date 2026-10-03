@@ -16,6 +16,7 @@ window.addEventListener('DOMContentLoaded', () => {
     $('write').disabled = writing || completed || !selected || (existing > 0 && !$('overwrite').checked);
   };
   const render = () => {
+    RuleOutlineEditor.recomputeLevels(rows);
     const body = $('rows'); body.replaceChildren();
     rows.forEach((row, index) => {
       const tr = document.createElement('tr');
@@ -23,17 +24,16 @@ window.addEventListener('DOMContentLoaded', () => {
       const cell = node => { const td = document.createElement('td'); td.append(node); tr.append(td); };
       const check = document.createElement('input'); check.type = 'checkbox'; check.checked = row.selected;
       check.setAttribute('aria-label', `选择 ${row.title}`);
-      check.addEventListener('change', () => { row.selected = check.checked; tr.classList.toggle('excluded', !row.selected); update(); }); cell(check);
+      check.addEventListener('change', () => { row.selected = check.checked; render(); }); cell(check);
       const title = document.createElement('input'); title.type = 'text'; title.value = row.title; title.className = 'title'; title.maxLength = 500;
-      title.style.paddingLeft = `${10 + (Number(row.level)-1)*18}px`; title.setAttribute('aria-label', '标题');
+      title.style.paddingLeft = `${10 + ((row.level || 1)-1)*18}px`; title.setAttribute('aria-label', '标题');
       title.addEventListener('input', () => row.title = title.value); cell(title);
-      const level = document.createElement('select'); level.setAttribute('aria-label', '层级');
-      for (let n=1;n<=6;n++) { const option = document.createElement('option'); option.value = String(n); option.textContent = String(n); level.append(option); }
-      level.value = String(row.level);
-      level.addEventListener('change', () => { row.level = Number(level.value); title.style.paddingLeft = `${10+(row.level-1)*18}px`; }); cell(level);
+      title.addEventListener('change', render);
+      const level = document.createElement('span'); level.textContent = row.level || '—'; cell(level);
+      const parent = document.createElement('span'); parent.textContent = row.selected ? (row.parentTitle || '顶层') : '—'; parent.className = 'parent'; cell(parent);
       const page = document.createElement('input'); page.type = 'number'; page.min = '1'; page.max = String(io.result.pages); page.value = row.page; page.className = 'page'; page.setAttribute('aria-label', 'PDF 页码');
       page.addEventListener('input', () => { row.page = Number(page.value); row.y = 0; row.x = 0; }); cell(page);
-      const evidence = document.createElement('span'); evidence.className = 'evidence'; evidence.textContent = `${row.score} · ${row.font_size} pt`; evidence.title = row.reasons.join('、'); cell(evidence);
+      const evidence = document.createElement('span'); evidence.className = 'evidence'; evidence.textContent = `${row.font_size} pt`; evidence.title = row.reasons.join('、'); cell(evidence);
       const moves = document.createElement('span');
       for (const [label, offset] of [['↑', -1], ['↓', 1]]) {
         const button = document.createElement('button'); button.type = 'button'; button.textContent = label;

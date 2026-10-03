@@ -26,34 +26,6 @@ export interface PdfLine {
   gapAfter: number;
 }
 
-export type NumberingType =
-  | "cn_chapter"
-  | "cn_number"
-  | "cn_paren"
-  | "decimal"
-  | "decimal2"
-  | "decimal3"
-  | "paren_num"
-  | "roman"
-  | "alpha";
-
-export interface NumberingInfo {
-  type: NumberingType;
-  levelHint?: number;
-  value: string;
-}
-
-export interface HeadingFeatures {
-  fontSize: number;
-  bold: number;
-  shortLine: number;
-  centered: number;
-  spacing: number;
-  numbering: number;
-  keyword: number;
-  penalties: number;
-}
-
 export interface HeadingCandidate {
   id: string;
 
@@ -66,15 +38,11 @@ export interface HeadingCandidate {
   fontSize: number;
   bold: boolean;
 
-  numbering?: NumberingInfo;
-
-  score: number;
-  features: HeadingFeatures;
+  reasons: string[];
 
   level: number;
+  parentId?: string;
   enabled: boolean;
-
-  confidence: "high" | "medium" | "low";
 }
 
 export interface ScanResult {

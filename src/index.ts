@@ -4,7 +4,7 @@ import {
 
 import {
   detectBodyFontSize,
-  scoreLines,
+  detectHeadings,
 } from "./scanner.js";
 
 import {
@@ -14,11 +14,10 @@ import {
 import type {
   ScanResult,
 } from "./types.js";
-import {filterRepeatedMargins, readingOrder, mergeWrappedHeadings} from './layout.js';
+import {readingOrder} from './layout.js';
 
 export async function scanPdfHeadings(
   data: Uint8Array,
-  threshold = 7,
   assetBase = '',
 ): Promise<ScanResult> {
   const {
@@ -26,8 +25,7 @@ export async function scanPdfHeadings(
     lines: extracted,
     existingOutline,
   } = await extractLines(data, assetBase);
-  if (!Number.isInteger(threshold) || threshold < 4 || threshold > 15) throw new Error('阈值必须为 4–15 的整数。');
-  const lines = readingOrder(filterRepeatedMargins(extracted, pageCount));
+  const lines = readingOrder(extracted);
 
   if (!lines.length) {
     throw new Error(
@@ -52,11 +50,7 @@ export async function scanPdfHeadings(
     detectBodyFontSize(lines);
 
   let headings =
-    scoreLines(
-      mergeWrappedHeadings(lines, bodyFontSize),
-      bodyFontSize,
-      threshold,
-    );
+    detectHeadings(lines, bodyFontSize);
 
   headings =
     inferHierarchy(headings);

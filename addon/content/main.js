@@ -101,17 +101,13 @@ var RuleOutline = {
   async generate(win) {
     if (this.busy) throw new Error('正在处理另一份 PDF，请稍候。');
     const {item, path} = await this.selectedPDF(win);
-    const input = {value: '7'};
-    if (!Services.prompt.prompt(win, '生成 PDF 大纲', '评分阈值（4–15，默认 7）：\n偏高会减少误判，偏低会保留更多标题候选。', input, null, {})) return;
-    const threshold = Number(input.value);
-    if (!Number.isInteger(threshold) || threshold < 4 || threshold > 15) throw new Error('阈值必须为 4–15 的整数。');
     this.busy = true;
     const progress = new Zotero.ProgressWindow({closeOnClick: true});
     progress.changeHeadline('规则大纲');
     progress.addDescription('正在本地分析 PDF，请稍候…');
     progress.show();
     let result;
-    try { result = await this.run({action: 'scan', pdf: path, threshold}); }
+    try { result = await this.run({action: 'scan', pdf: path}); }
     finally { this.busy = false; progress.close(); }
     if (!this.alive) return;
     const io = {

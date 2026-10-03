@@ -3,11 +3,10 @@ import {getDocument} from 'pdfjs-dist/legacy/build/pdf.mjs';
 import {scanPdfHeadings} from './index.js';
 import {openPDF, assertUnsigned, writeOutline} from './pdf.js';
 import type {OutlineHeading} from './types.js';
-export {parseNumbering} from './numbering.js';
 export {extractLines} from './extract.js';
 export {inferHierarchy} from './hierarchy.js';
-export {detectBodyFontSize, scoreLines} from './scanner.js';
-export {filterRepeatedMargins, readingOrder, mergeWrappedHeadings} from './layout.js';
+export {detectBodyFontSize, detectHeadings} from './scanner.js';
+export {readingOrder} from './layout.js';
 export {writeOutline, openPDF, validateHeadings} from './pdf.js';
 
 // Preloaded PDF.js worker handler avoids remote imports and Worker/JAR URL issues.
@@ -18,16 +17,15 @@ export async function sha256(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
 }
 
-export async function scan(data: Uint8Array, threshold=7, assetBase='') {
+export async function scan(data: Uint8Array, assetBase='') {
   const doc = await openPDF(data);
   assertUnsigned(doc);
-  const result = await scanPdfHeadings(data, threshold, assetBase);
+  const result = await scanPdfHeadings(data, assetBase);
   return {pages: result.pageCount, sha256: await sha256(data), existing_outline: result.existingOutline,
     context: {body_font_size: result.bodyFontSize},
     headings: result.headings.map(h => ({...h, title:h.text, font_size:h.fontSize,
-      y: Math.max(0, result.lines.find(l => l.page===h.page)?.pageHeight! - h.y - h.fontSize),
-      reasons: Object.entries(h.features).filter(([,value]) => value!==0).map(([key,value]) => `${key}: ${value}`)})),
-    warnings: result.headings.length ? [] : ['未识别到标题，可降低评分阈值后重试。']};
+      y: Math.max(0, result.lines.find(l => l.page===h.page)?.pageHeight! - h.y - h.fontSize)})),
+    warnings: result.headings.length ? [] : ['没有大字号文字或符合单行短文本条件的数字编号标题，未生成候选。']};
 }
 
 export async function inspectOutline(data: Uint8Array, assetBase='') {
@@ -60,7 +58,7 @@ export interface FileAccess {
   remove(path:string, options?:{ignoreAbsent?:boolean}): Promise<unknown>;
 }
 export interface Paths {join(...parts:string[]):string; filename(path:string):string}
-export interface Request {action:string;pdf:string;threshold?:number;sha256?:string;headings?:OutlineHeading[];overwrite?:boolean;backup_directory?:string}
+export interface Request {action:string;pdf:string;sha256?:string;headings?:OutlineHeading[];overwrite?:boolean;backup_directory?:string}
 
 export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>crypto.randomUUID()) {
   const atomic = async (path:string, bytes:Uint8Array) => {
@@ -132,7 +130,7 @@ export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>
     return {restored:true,sha256:info.before_sha256};
   });
   return {run: async (request:Request) => {
-    if (request.action==='scan') return scan(await IO.read(request.pdf),request.threshold,assetBase);
+    if (request.action==='scan') return scan(await IO.read(request.pdf),assetBase);
     if (request.action==='apply') return apply(request);
     if (request.action==='restore') return restore(request);
     throw new Error('未知操作。');

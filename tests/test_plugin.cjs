@@ -22,7 +22,7 @@ test('plugin runs JavaScript without Python configuration or subprocesses',async
   const directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-plugin-'));
   try{
     const pdf=path.join(directory,'paper.pdf');await fs.writeFile(pdf,await fixture());
-    assert.ok((await plugin.run({action:'scan',pdf,threshold:7})).headings.length);assert.equal(plugin.operations.size,0);
+    assert.ok((await plugin.run({action:'scan',pdf})).headings.length);assert.equal(plugin.operations.size,0);
     assert.equal(loads.length,1);
     await plugin.shutdown();assert.equal(plugin.windows.size,0);await assert.rejects(plugin.run({action:'scan',pdf}),/插件已关闭/);
   }finally{await fs.rm(directory,{recursive:true,force:true});}

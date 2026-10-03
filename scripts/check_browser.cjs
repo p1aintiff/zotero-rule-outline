@@ -24,7 +24,7 @@ const {fixture,root}=require('../tests/helpers.js');
     await page.goto(base);
     const result=await page.evaluate(async()=>{
       const data=new Uint8Array(await (await fetch('/paper.pdf')).arrayBuffer()),engine=window.RuleOutlineEngine;
-      const result=await engine.scan(data,7,location.origin+'/addon/vendor/');
+      const result=await engine.scan(data,location.origin+'/addon/vendor/');
       const updated=await engine.writeOutline(data,result.headings,false);
       const check=await engine.inspectOutline(updated,location.origin+'/addon/vendor/');
       if(check.headings.length!==result.headings.length)throw new Error('Outline roundtrip mismatch');
