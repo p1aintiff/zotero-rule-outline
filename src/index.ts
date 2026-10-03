@@ -15,6 +15,7 @@ import type {
   ScanResult,
 } from "./types.js";
 import {readingOrder} from './layout.js';
+import {filterPageMargins} from './margins.js';
 
 export async function scanPdfHeadings(
   data: Uint8Array,
@@ -46,11 +47,12 @@ export async function scanPdfHeadings(
     );
   }
 
+  const margins = filterPageMargins(lines);
   const bodyFontSize =
-    detectBodyFontSize(lines);
+    detectBodyFontSize(margins.lines);
 
   let headings =
-    detectHeadings(lines, bodyFontSize);
+    detectHeadings(margins.lines, bodyFontSize);
 
   headings =
     inferHierarchy(headings);
@@ -59,6 +61,7 @@ export async function scanPdfHeadings(
     pageCount,
     bodyFontSize,
     lines,
+    margins,
     headings,
     existingOutline,
   };

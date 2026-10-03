@@ -72,6 +72,19 @@ function sameLine(a: Span, b: Span): boolean {
   return Math.abs(a.y - b.y) <= tolerance;
 }
 
+function compatibleStyle(spans: Span[], span: Span): boolean {
+  if (spans[0].fontSize === span.fontSize) return true;
+  // PDFs can give a decimal point or comma a different font size. Keep
+  // adjacent punctuation with its text without merging different-size words.
+  const punctuation = (text: string) => /^[\p{P}]+$/u.test(text.trim());
+  const previous = spans[spans.length - 1];
+  const gap = span.x - (previous.x + previous.width);
+  const size = Math.min(previous.fontSize, span.fontSize);
+  return (punctuation(span.text) || spans.every(s => punctuation(s.text))) &&
+    Math.abs(previous.y - span.y) <= size * 0.2 &&
+    gap >= -size * 0.2 && gap <= size * 0.5;
+}
+
 function buildLine(
   spans: Span[],
   page: number,
@@ -296,7 +309,7 @@ export async function extractLines(
 
       if (
         last &&
-        sameLine(last[0], span) && last[0].fontSize === span.fontSize &&
+        sameLine(last[0], span) && compatibleStyle(last, span) &&
         span.x - Math.max(...last.map(s => s.x + s.width)) < Math.max(span.fontSize * 1.5, viewport.width * 0.02)
       ) {
         last.push(span);

@@ -49,6 +49,11 @@ export interface ScanResult {
   pageCount: number;
   bodyFontSize: number;
   lines: PdfLine[];
+  margins: {
+    lines: PdfLine[];
+    excluded: PdfLine[];
+    bands: import('./margins.js').MarginBand[];
+  };
   headings: HeadingCandidate[];
   existingOutline: unknown[];
 }

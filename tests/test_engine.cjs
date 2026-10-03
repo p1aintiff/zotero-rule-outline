@@ -43,6 +43,30 @@ test('keeps a larger heading separate from opposite-column body on the same base
   assert.deepEqual(Array.from(result.headings,h=>h.title),['1 Related research','4.1 Conclusion']);
   assert.equal(result.headings[0].font_size,11.2);
 });
+test('joins differently-sized decimal punctuation and body commas without losing heading text',async()=>{
+  const {api,assetBase}=await loaded,pdf=await PDFDocument.create();
+  const font=await pdf.embedFont(require('pdf-lib').StandardFonts.Helvetica),page=pdf.addPage([595,842]);
+  let x=50;
+  for(const [text,size] of [['2',14],['.',11],['2.1 Technical paths',14]]) {
+    page.drawText(text,{x,y:700,size,font});
+    x+=font.widthOfTextAtSize(text,size);
+  }
+  x=50;
+  for(const [text,size] of [['Body text',12],[',',12.6],[' more body text.',12]]) {
+    page.drawText(text,{x,y:660,size,font});
+    x+=font.widthOfTextAtSize(text,size);
+  }
+  for(let i=0;i<10;i++) page.drawText('Ordinary body text determines the base font size.',{x:50,y:620-i*24,size:12,font});
+  page.drawText('+',{x:50,y:330,size:16,font});
+  page.drawText('42',{x:50,y:300,size:16,font});
+  const data=await pdf.save();
+  const extracted=await api.extractLines(data,assetBase);
+  assert.ok(extracted.lines.some(l=>l.text==='2.2.1 Technical paths'&&l.fontSize===14));
+  assert.ok(extracted.lines.some(l=>l.text==='Body text, more body text.'&&l.fontSize===12));
+  const result=await api.scan(data,assetBase);
+  assert.deepEqual(Array.from(result.headings,h=>h.title),['2.2.1 Technical paths']);
+});
+
 test('writes Unicode nested outlines, preserves annotations and crop/rotation destinations',async()=>{
   const {api,assetBase}=await loaded,original=await fixture({rotated:true}),doc=await PDFDocument.load(original);
   const annotation=doc.context.register(doc.context.obj({Type:'Annot',Subtype:'Text',Rect:[30,40,50,60],Contents:PDFHexString.fromText('保留批注')}));

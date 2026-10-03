@@ -13,11 +13,12 @@ test('counts font sizes at 0.1 pt precision over all text, including margins',as
  assert.equal(api.detectBodyFontSize(lines),9.7);
  assert.equal(api.detectBodyFontSize([]),0);
 });
-test('accepts every nonempty line larger than body, regardless of text, bold or location',async()=>{
+test('accepts larger-font text but rejects standalone punctuation, symbols and numbers',async()=>{
  const {api}=await loaded;
- const texts=['普通标题','图1 方法','12','DOI: 10.1234/example','这是一句正文。','关键词','长'.repeat(101)];
+ const texts=['普通标题','图1 方法','DOI: 10.1234/example','这是一句正文。','关键词','长'.repeat(101)];
  const candidates=api.detectHeadings(texts.map(t=>line(t,9.8,{y:820})),9.7);
  assert.deepEqual(Array.from(candidates,h=>h.text),texts);
+ assert.equal(api.detectHeadings(['12','2.1','，',',','。','+','=','$','∑','（ ）','...'].map(t=>line(t,16)),9.7).length,0);
  assert.equal(api.detectHeadings([line('参考文献',9.7,{bold:true}),line('普通方法',9.6),line(' ',12)],9.7).length,0);
 });
 test('short single-line numeric titles at body font form second and third levels',async()=>{

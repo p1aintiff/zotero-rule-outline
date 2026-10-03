@@ -19,7 +19,8 @@ export function detectBodyFontSize(lines: PdfLine[]): number {
 }
 
 export function detectHeadings(lines: PdfLine[], bodyFontSize: number): HeadingCandidate[] {
-  return lines.filter(line => line.text.trim() && (line.fontSize > bodyFontSize || numberedHeadingLevel(line.text))).map((line, index) => ({
+  // Large punctuation, numeric fragments and equation operators are not titles.
+  return lines.filter(line => /\p{L}/u.test(line.text) && (line.fontSize > bodyFontSize || numberedHeadingLevel(line.text))).map((line, index) => ({
     id: `heading-${line.page}-${index}`, page: line.page, x: line.x, y: line.y,
     text: line.text.trim(), fontSize: line.fontSize, bold: line.bold,
     reasons: line.fontSize > bodyFontSize ? ['字号大于正文'] : ['单行、短文本、数字编号 + 文字'], level: 1, enabled: true,
