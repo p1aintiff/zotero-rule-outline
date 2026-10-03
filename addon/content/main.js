@@ -25,12 +25,11 @@ var RuleOutline = {
     };
     const context = doc.getElementById('zotero-itemmenu');
     const generate = add(context, 'rule-outline-generate', '生成 PDF 大纲（规则）…', () => this.generate(win));
-    const restore = add(context, 'rule-outline-restore', '恢复上次生成大纲前的 PDF…', () => this.restore(win));
     if (context) {
       const refresh = () => {
         const selected = win.ZoteroPane.getSelectedItems();
         const valid = selected.length === 1 && (selected[0].isRegularItem() || selected[0].isPDFAttachment());
-        for (const node of [generate, restore]) node.disabled = !valid || this.busy;
+        generate.disabled = !valid || this.busy;
       };
       context.addEventListener('popupshowing', refresh);
       listeners.push([context, 'popupshowing', refresh]);
@@ -73,29 +72,10 @@ var RuleOutline = {
     if (!item.isEditable()) throw new Error('此附件不可编辑。');
     const library = Zotero.Libraries.get(item.libraryID);
     if (library.filesEditable === false) throw new Error('此文献库没有文件编辑权限。');
+    if (library.libraryType === 'group') throw new Error('群组文献库不支持链接文件附件，请在个人文献库中生成大纲副本。');
     const path = await item.getFilePathAsync();
     if (!path || !await this.IO.exists(path)) throw new Error('PDF 尚未下载或文件不存在。');
     return {item, path};
-  },
-
-  assertClosed(item) {
-    // Reader has no public lookup by item ID. This is the only Reader-internal access.
-    if (!Array.isArray(Zotero.Reader._readers)) throw new Error('无法检查阅读器状态，请关闭所有 PDF 后重启 Zotero 再试。');
-    if (Zotero.Reader._readers.some(r => r.itemID === item.id && !r._isTabClosed)) {
-      throw new Error('请先关闭这份 PDF 的 Zotero 阅读器标签页/窗口，再点击写入或恢复。预览窗口可以保持打开。');
-    }
-  },
-
-  backupDirectory(item) {
-    return this.Path.join(Zotero.DataDirectory.dir, 'rule-outline-backups', String(item.libraryID), item.key);
-  },
-
-  async syncChanged(item) {
-    if (item.isImportedAttachment()) {
-      item.attachmentSyncState = 'to_upload';
-      await item.saveTx();
-    }
-    await Zotero.Notifier.trigger('refresh', 'item', [item.id]);
   },
 
   async generate(win) {
@@ -110,6 +90,26 @@ var RuleOutline = {
     try { result = await this.run({action: 'scan', pdf: path}); }
     finally { this.busy = false; progress.close(); }
     if (!this.alive) return;
+    let outputPath, outputAttachment, registration;
+    const registerOutput = async () => {
+      if (!this.alive) throw new Error('插件已关闭。');
+      if (!outputPath) throw new Error('请先生成大纲副本。');
+      if (outputAttachment) return outputAttachment;
+      if (registration) return registration;
+      // Store the promise so repeated open clicks cannot create duplicate attachments.
+      const options = {file: outputPath, title: '带大纲版本', contentType: 'application/pdf'};
+      if (item.parentID) options.parentItemID = item.parentID;
+      else options.collections = item.getCollections();
+      registration = Zotero.Attachments.linkFromFile(options);
+      this.operations.add(registration);
+      try {
+        outputAttachment = await registration;
+        return outputAttachment;
+      } finally {
+        this.operations.delete(registration);
+        registration = undefined;
+      }
+    };
     const io = {
       result,
       name: item.getField('title') || this.Path.filename(path),
@@ -118,34 +118,29 @@ var RuleOutline = {
         if (this.busy) throw new Error('正在处理另一份 PDF，请稍候。');
         // Recheck permissions/path after an arbitrarily long preview session.
         if (!item.isEditable() || Zotero.Libraries.get(item.libraryID).filesEditable === false || await item.getFilePathAsync() !== path) throw new Error('附件权限或路径已变化，请重新生成。');
-        this.assertClosed(item);
         this.busy = true;
         try {
-          const written = await this.run({action: 'apply', pdf: path, sha256: result.sha256, headings, overwrite, backup_directory: this.backupDirectory(item)});
-          try { await this.syncChanged(item); }
-          catch (error) { written.warning = 'PDF 已成功写入，但 Zotero 同步状态更新失败。请重启 Zotero 并检查同步。'; Zotero.logError(error); }
+          const written = await this.run({action: 'apply', pdf: path, sha256: result.sha256, headings, overwrite});
+          outputPath = written.output;
+          try {
+            const attachment = await registerOutput();
+            written.attachmentID = attachment.id;
+          } catch (error) {
+            // The valid PDF already exists. Keep it and allow registration to be retried.
+            Zotero.logError(error);
+            written.warning = '副本已保存，但自动添加链接附件失败。点击“打开新 PDF”重试，或手动添加该文件。';
+          }
           return written;
         } finally { this.busy = false; }
       },
-      open: () => Zotero.Reader.open(item.id),
+      open: async () => {
+        const attachment = await registerOutput();
+        await Zotero.Reader.open(attachment.id);
+      },
     };
     const dialog = win.openDialog('chrome://rule-outline/content/preview.xhtml', '', 'chrome,centerscreen,resizable,width=1000,height=720', io);
     this.dialogs.add(dialog);
     dialog.addEventListener('unload', () => this.dialogs.delete(dialog), {once: true});
-  },
-
-  async restore(win) {
-    if (this.busy) throw new Error('正在处理另一份 PDF，请稍候。');
-    const {item, path} = await this.selectedPDF(win);
-    this.assertClosed(item);
-    if (!Services.prompt.confirm(win, '恢复 PDF', '恢复最近一次生成大纲前的完整 PDF？\n若生成后文件又发生变化，将拒绝自动恢复。')) return;
-    this.busy = true;
-    try {
-      await this.run({action: 'restore', pdf: path, backup_directory: this.backupDirectory(item)});
-      try { await this.syncChanged(item); }
-      catch (error) { Zotero.logError(error); Services.prompt.alert(win, '同步提醒', 'PDF 已恢复，但同步状态更新失败，请重启并检查同步。'); }
-      Services.prompt.alert(win, '规则大纲', '已恢复原 PDF，备份仍然保留。重新打开 PDF 即可查看。');
-    } finally { this.busy = false; }
   },
 
   initializeEngine(win) {

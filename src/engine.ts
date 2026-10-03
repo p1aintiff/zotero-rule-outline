@@ -52,22 +52,15 @@ export async function inspectOutline(data: Uint8Array, assetBase='') {
 
 export interface FileAccess {
   read(path:string): Promise<Uint8Array>;
-  readJSON(path:string): Promise<any>;
+  exists(path:string): Promise<boolean>;
   write(path:string, bytes:Uint8Array, options?:{mode?:string;tmpPath?:string;flush?:boolean}): Promise<unknown>;
-  writeJSON(path:string, value:unknown, options?:{tmpPath?:string}): Promise<unknown>;
-  makeDirectory(path:string, options?:{permissions?:number}): Promise<unknown>;
+  move(source:string, destination:string, options?:{noOverwrite?:boolean}): Promise<unknown>;
   remove(path:string, options?:{ignoreAbsent?:boolean}): Promise<unknown>;
 }
 export interface Paths {join(...parts:string[]):string; filename(path:string):string}
-export interface Request {action:string;pdf:string;sha256?:string;headings?:OutlineHeading[];overwrite?:boolean;backup_directory?:string}
+export interface Request {action:string;pdf:string;sha256?:string;headings?:OutlineHeading[];overwrite?:boolean}
 
 export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>crypto.randomUUID()) {
-  const atomic = async (path:string, bytes:Uint8Array) => {
-    const tmpPath=path+'.rule-outline-'+uuid()+'.tmp';
-    try { await IO.write(path,bytes,{tmpPath,flush:true}); }
-    finally { await IO.remove(tmpPath,{ignoreAbsent:true}); }
-  };
-  const json = async (path:string, value:unknown) => atomic(path,new TextEncoder().encode(JSON.stringify(value)));
   const unchanged = async (path:string, hash:string, message:string) => {
     if (await sha256(await IO.read(path))!==hash) throw new Error(message);
   };
@@ -90,50 +83,39 @@ export function createService(IO:FileAccess, Path:Paths, assetBase='', uuid=()=>
       throw new Error('书签写入验证失败，原文件未修改。');
     }
     await unchanged(request.pdf,before,'写入前 PDF 已变化，操作取消。');
-    const directory=request.backup_directory || request.pdf+'.rule-outline-backups';
-    await IO.makeDirectory(directory,{permissions:0o700});
-    const name=uuid()+'.pdf', backup=Path.join(directory,name);
-    await atomic(backup,original);
-    await unchanged(backup,before,'备份校验失败，原文件未修改。');
     const after=await sha256(rewritten);
-    const marker=Path.join(directory,'latest.json');
-    let previousMarker:unknown;
-    try { previousMarker=await IO.readJSON(marker); } catch { /* No prior write. */ }
-    await json(marker,{backup:name,before_sha256:before,after_sha256:after,restored:false});
+    const filename=Path.filename(request.pdf);
+    const directory=request.pdf.slice(0,request.pdf.length-filename.length);
+    const stem=filename.replace(/\.pdf$/i,'');
+    const tmpPath=Path.join(directory,stem+'.rule-outline-'+uuid()+'.tmp');
+    let created=false;
     try {
-      await unchanged(request.pdf,before,'写入前 PDF 已变化，操作取消。');
-      await atomic(request.pdf,rewritten);
-    } catch(error) {
-      // If replacement failed and the source is intact, keep the last successful recovery record.
-      if (await sha256(await IO.read(request.pdf))===before) {
-        if(previousMarker!==undefined) await json(marker,previousMarker);
-        else await IO.remove(marker,{ignoreAbsent:true});
+      // Copy the source into a private sibling file, then write only to that copy.
+      await IO.write(tmpPath,original,{mode:'create',flush:true});
+      created=true;
+      await unchanged(tmpPath,before,'副本校验失败，原文件未修改。');
+      await IO.write(tmpPath,rewritten,{flush:true});
+      await unchanged(tmpPath,after,'新文件校验失败，原文件未修改。');
+      for(let index=1;index<=1000;index++) {
+        const output=Path.join(directory,stem+'-大纲'+(index===1?'':`-${index}`)+'.pdf');
+        if(await IO.exists(output)) continue;
+        await unchanged(request.pdf,before,'生成副本前 PDF 已变化，操作取消。');
+        try { await IO.move(tmpPath,output,{noOverwrite:true}); }
+        catch(error) {
+          // Another process may create the destination after the existence check.
+          if(await IO.exists(output)) continue;
+          throw error;
+        }
+        return {count:headings.length,output,sha256:after};
       }
-      throw error;
+      throw new Error('同目录的大纲副本过多，请整理文件后重试。');
+    } finally {
+      if(created) await IO.remove(tmpPath,{ignoreAbsent:true});
     }
-    return {count:headings.length,backup,sha256:after};
-  });
-  const restore = (request:Request) => locked(request.pdf,async()=>{
-    const directory=request.backup_directory || request.pdf+'.rule-outline-backups';
-    const marker=Path.join(directory,'latest.json');
-    let info;
-    try { info=await IO.readJSON(marker); } catch { throw new Error('没有可恢复的备份。'); }
-    if (info.restored) throw new Error('最近一次备份已恢复。');
-    if (typeof info.backup!=='string' || !/^[a-zA-Z0-9-]+\.pdf$/.test(info.backup) ||
-      !/^[a-f0-9]{64}$/.test(info.before_sha256) || !/^[a-f0-9]{64}$/.test(info.after_sha256)) throw new Error('备份记录无效。');
-    await unchanged(request.pdf,info.after_sha256,'PDF 在生成大纲后又被修改，拒绝覆盖；请手动检查备份。');
-    const backup=await IO.read(Path.join(directory,info.backup));
-    if (await sha256(backup)!==info.before_sha256) throw new Error('备份校验失败。');
-    await openPDF(backup);
-    await unchanged(request.pdf,info.after_sha256,'恢复前 PDF 已变化。');
-    await atomic(request.pdf,backup);
-    await json(marker,{...info,restored:true});
-    return {restored:true,sha256:info.before_sha256};
   });
   return {run: async (request:Request) => {
     if (request.action==='scan') return scan(await IO.read(request.pdf),assetBase);
     if (request.action==='apply') return apply(request);
-    if (request.action==='restore') return restore(request);
     throw new Error('未知操作。');
   }};
 }

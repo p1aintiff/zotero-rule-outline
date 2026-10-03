@@ -34,15 +34,81 @@ test('failed resource loads report reinstall/restart guidance and never use stal
   assert.ok(plugin.engineErrors.has(win));
   plugin.removeWindow(win);assert.equal(plugin.engineErrors.size,0);
 });
-test('rejects read-only attachments and PDFs open in readers',async()=>{
+test('rejects read-only attachments',async()=>{
   const {plugin,Zotero}=await loadPlugin(),item={id:42,isRegularItem:()=>false,isPDFAttachment:()=>true,isEditable:()=>false};
   await assert.rejects(plugin.selectedPDF({ZoteroPane:{getSelectedItems:()=>[item]}}),/不可编辑/);
-  Zotero.Reader._readers=[{itemID:42}];assert.throws(()=>plugin.assertClosed(item),/先关闭/);
-  Zotero.Reader._readers=[{itemID:42,_isTabClosed:true}];assert.doesNotThrow(()=>plugin.assertClosed(item));
 });
-test('sync updates imported attachments only',async()=>{
-  const {plugin,Zotero}=await loadPlugin();let saved=0,notified=0;Zotero.Notifier={trigger:async()=>notified++};
-  const item={id:1,isImportedAttachment:()=>true,saveTx:async()=>saved++};await plugin.syncChanged(item);
-  assert.equal(item.attachmentSyncState,'to_upload');assert.equal(saved,1);item.isImportedAttachment=()=>false;
-  await plugin.syncChanged(item);assert.equal(saved,1);assert.equal(notified,2);
+test('preview registers a sibling linked attachment and opens it in Zotero',async()=>{
+  const {plugin,Zotero,win}=await loadPlugin(),directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-preview-copy-'));
+  try{
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture();await fs.writeFile(pdf,original);
+    const item={id:42,parentID:17,libraryID:1,isRegularItem:()=>false,isPDFAttachment:()=>true,isEditable:()=>true,
+      getFilePathAsync:async()=>pdf,getField:()=> 'paper',saveTx:async()=>{throw new Error('Original attachment must not change');}};
+    Zotero.Reader._readers=[{itemID:42}];
+    Zotero.Reader.open=async id=>{opened=id;};
+    Zotero.ProgressWindow=class{changeHeadline(){}addDescription(){}show(){}close(){}};
+    let opened,io,registered;
+    Zotero.launchFile=()=>{throw new Error('Must use the Zotero reader');};
+    Zotero.Attachments={linkFromFile:async options=>{registered=options;return {id:99};}};
+    win.ZoteroPane={getSelectedItems:()=>[item]};
+    win.openDialog=(url,name,options,args)=>{io=args;return {addEventListener(){},close(){}};};
+    await plugin.generate(win);
+    await assert.rejects(io.open(),/先生成/);
+    const written=await io.apply(io.result.headings,false);
+    await io.open();
+    assert.equal(opened,99);
+    assert.equal(written.attachmentID,99);
+    assert.equal(registered.file,written.output);
+    assert.equal(registered.parentItemID,17);
+    assert.equal(registered.title,'带大纲版本');
+    assert.equal(registered.contentType,'application/pdf');
+    assert.equal(registered.collections,undefined);
+    assert.equal(path.dirname(registered.file),directory);
+    assert.notEqual(registered.file,pdf);
+    assert.equal(item.attachmentSyncState,undefined);
+    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
+    assert.equal(plugin.restore,undefined);
+    assert.equal(plugin.backupDirectory,undefined);
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+
+test('standalone PDF keeps its collections; failed linking can retry without regenerating or duplicating',async()=>{
+  const {plugin,Zotero,win}=await loadPlugin(),directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-link-retry-'));
+  try{
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture();await fs.writeFile(pdf,original);
+    const item={id:42,libraryID:1,isRegularItem:()=>false,isPDFAttachment:()=>true,isEditable:()=>true,
+      getFilePathAsync:async()=>pdf,getField:()=> 'paper',getCollections:()=>[5,6]};
+    Zotero.ProgressWindow=class{changeHeadline(){}addDescription(){}show(){}close(){}};
+    let io,calls=0,registered;
+    Zotero.Attachments={linkFromFile:async options=>{
+      calls++;registered=options;
+      if(calls===1)throw new Error('simulated attachment failure');
+      await Promise.resolve();
+      return {id:88};
+    }};
+    const opened=[];Zotero.Reader.open=async id=>opened.push(id);
+    win.ZoteroPane={getSelectedItems:()=>[item]};
+    win.openDialog=(url,name,options,args)=>{io=args;return {addEventListener(){},close(){}};};
+    await plugin.generate(win);
+    const written=await io.apply(io.result.headings,false);
+    assert.match(written.warning,/副本已保存.*链接附件失败/);
+    assert.ok(await fs.stat(written.output));
+    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
+    await Promise.all([io.open(),io.open()]);
+    assert.equal(calls,2);
+    assert.equal(registered.file,written.output);
+    assert.equal(registered.parentItemID,undefined);
+    assert.deepEqual(Array.from(registered.collections),[5,6]);
+    assert.deepEqual(opened,[88,88]);
+    assert.equal((await fs.readdir(directory)).length,2);
+    assert.equal(plugin.operations.size,0);
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+
+test('group libraries reject linking before generating a copy',async()=>{
+  const {plugin,Zotero}=await loadPlugin();
+  Zotero.Libraries.get=()=>({filesEditable:true,libraryType:'group'});
+  const item={id:42,libraryID:2,isRegularItem:()=>false,isPDFAttachment:()=>true,isEditable:()=>true,
+    getFilePathAsync:async()=>{throw new Error('Should reject before accessing files');}};
+  await assert.rejects(plugin.selectedPDF({ZoteroPane:{getSelectedItems:()=>[item]}}),/群组文献库不支持/);
 });

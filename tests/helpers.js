@@ -30,6 +30,10 @@ function fileIO() {
       else await fs.writeFile(p,data,{flag:options.mode==='create'?'wx':'w'});
     },
     makeDirectory:(p,options={})=>fs.mkdir(p,{recursive:true,mode:options.permissions}),
+    move:async(source,destination,options={})=>{
+      if(options.noOverwrite) {await fs.copyFile(source,destination,require('node:fs').constants.COPYFILE_EXCL);await fs.unlink(source);}
+      else await fs.rename(source,destination);
+    },
     remove:(p,options={})=>fs.rm(p,{force:!!options.ignoreAbsent,recursive:!!options.recursive}),
   };
 }

@@ -45,10 +45,13 @@ async function startup(){
     result.pages=scan.pages;result.titles=scan.headings.map(h=>h.title);
     const written=await service.run({action:'apply',pdf:${JSON.stringify(path.join(profile,'paper.pdf'))},sha256:scan.sha256,headings:scan.headings});
     result.written=written.count;
-    await service.run({action:'restore',pdf:${JSON.stringify(path.join(profile,'paper.pdf'))}});
+    const copy=await IOUtils.read(written.output);
+    const inspected=await host.RuleOutlineEngine.inspectOutline(copy,'chrome://rule-outline-probe-vendor/content/');
+    if(inspected.headings.length!==written.count)throw new Error('Copy outline differs');
+    result.output=written.output;
     const after=await IOUtils.read(${JSON.stringify(path.join(profile,'paper.pdf'))});
-    if(before.length!==after.length || before.some((value,index)=>value!==after[index]))throw new Error('Restored PDF differs');
-    result.restored=true;
+    if(before.length!==after.length || before.some((value,index)=>value!==after[index]))throw new Error('Source PDF changed');
+    result.sourceUnchanged=true;
     await pluginScope.shutdown();
     result.menuRemoved=!host.document.getElementById('rule-outline-generate');
     result.ok=true;

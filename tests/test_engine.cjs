@@ -83,27 +83,70 @@ test('writes Unicode nested outlines, preserves annotations and crop/rotation de
   await assert.rejects(api.writeOutline(bytes,rows,false),/已有大纲/);await api.writeOutline(bytes,rows,true);
   for(const bad of [[{title:'x',level:2,page:1}],[{title:'',level:1,page:1}],[{title:'x',level:1,page:9}]]) await assert.rejects(api.writeOutline(original,bad,false));
 });
-test('backs up, validates changes, restores byte-for-byte and rejects tampering and locks',async()=>{
+test('writes sibling copies, preserves source bytes and avoids existing output names',async()=>{
   const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-js-'));
   try{
     const pdf=path.join(directory,'中文 论文.pdf'),original=await fixture();await fs.writeFile(pdf,original);
     const service=api.createService(fileIO(),{join:path.join,filename:path.basename},assetBase);
     const scanned=await service.run({action:'scan',pdf});
     const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings,overwrite:false},result=await service.run(request);
-    assert.deepEqual(await fs.readFile(result.backup),Buffer.from(original));
+    assert.equal(result.output,path.join(directory,'中文 论文-大纲.pdf'));
+    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
+    const written=await fs.readFile(result.output);
+    assert.equal(await api.sha256(new Uint8Array(written)),result.sha256);
+    assert.equal((await api.inspectOutline(new Uint8Array(written),assetBase)).headings.length,scanned.headings.length);
+    const second=await service.run(request);
+    assert.equal(second.output,path.join(directory,'中文 论文-大纲-2.pdf'));
+    assert.deepEqual(await fs.readFile(result.output),written);
+    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
+    assert.deepEqual((await fs.readdir(directory)).sort(),['中文 论文-大纲-2.pdf','中文 论文-大纲.pdf','中文 论文.pdf'].sort());
+    await fs.appendFile(pdf,'modified');
     await assert.rejects(service.run(request),/自预览后已变化/);
-    const written=await fs.readFile(pdf);await fs.appendFile(pdf,'modified');
-    await assert.rejects(service.run({action:'restore',pdf}),/被修改/);await fs.writeFile(pdf,written);
-    const io=fileIO(),record=await fs.readFile(pdf+'.rule-outline-backups/latest.json');
-    const failingIO={...io,write:async(p,data,options)=>{if(p===pdf)throw new Error('simulated replace failure');return io.write(p,data,options);}};
-    const failingService=api.createService(failingIO,{join:path.join,filename:path.basename},assetBase);
-    await assert.rejects(failingService.run({...request,sha256:await api.sha256(new Uint8Array(written)),overwrite:true}),/simulated replace failure/);
-    assert.deepEqual(await fs.readFile(pdf),written);
-    assert.deepEqual(await fs.readFile(pdf+'.rule-outline-backups/latest.json'),record);
-    const backup=await fs.readFile(result.backup);await fs.appendFile(result.backup,'corrupt');
-    await assert.rejects(service.run({action:'restore',pdf}),/备份校验/);await fs.writeFile(result.backup,backup);
-    await service.run({action:'restore',pdf});assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
-    await assert.rejects(service.run({action:'restore',pdf}),/已恢复/);
+    await fs.writeFile(pdf,original);
     await fs.writeFile(pdf+'.rule-outline.lock','lock');await assert.rejects(service.run(request),/互斥锁/);
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+
+test('copy failures and late source changes leave no output or temporary files',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-copy-fail-'));
+  try{
+    const pdf=path.join(directory,'paper.pdf'),original=await fixture();await fs.writeFile(pdf,original);
+    const io=fileIO(),paths={join:path.join,filename:path.basename};
+    const scanned=await api.scan(original,assetBase);
+    const request={action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings};
+    for(const phase of ['write','move','corrupt','source']) {
+      const simulated={...io,
+        write:async(p,data,options)=>{
+          if(p.endsWith('.tmp')&&options?.mode!=='create') {
+            if(phase==='write'){await io.write(p,new Uint8Array([1]));throw new Error('simulated write failure');}
+            if(phase==='corrupt')return io.write(p,new Uint8Array([1]));
+            if(phase==='source')await fs.appendFile(pdf,'modified');
+          }
+          return io.write(p,data,options);
+        },
+        move:async(...args)=>{if(phase==='move')throw new Error('simulated move failure');return io.move(...args);},
+      };
+      await assert.rejects(api.createService(simulated,paths,assetBase).run(request),/simulated|校验失败|已变化/);
+      assert.deepEqual(await fs.readdir(directory),['paper.pdf']);
+      assert.deepEqual(await fs.readFile(pdf),phase==='source'?Buffer.concat([Buffer.from(original),Buffer.from('modified')]):Buffer.from(original));
+      await fs.writeFile(pdf,original);
+    }
+  }finally{await fs.rm(directory,{recursive:true,force:true});}
+});
+
+test('a destination created during publication is preserved and gets a numbered alternative',async()=>{
+  const {api,assetBase}=await loaded,directory=await fs.mkdtemp(path.join(os.tmpdir(),'rule-copy-race-'));
+  try{
+    const pdf=path.join(directory,'paper.PDF'),original=await fixture();await fs.writeFile(pdf,original);
+    const scanned=await api.scan(original,assetBase),io=fileIO();let raced=false;
+    const simulated={...io,move:async(source,destination,options)=>{
+      assert.equal(options.noOverwrite,true);
+      if(!raced){raced=true;await fs.writeFile(destination,'external file');}
+      return io.move(source,destination,options);
+    }};
+    const result=await api.createService(simulated,{join:path.join,filename:path.basename},assetBase).run({action:'apply',pdf,sha256:scanned.sha256,headings:scanned.headings});
+    assert.equal(path.basename(result.output),'paper-大纲-2.pdf');
+    assert.equal(await fs.readFile(path.join(directory,'paper-大纲.pdf'),'utf8'),'external file');
+    assert.deepEqual(await fs.readFile(pdf),Buffer.from(original));
   }finally{await fs.rm(directory,{recursive:true,force:true});}
 });

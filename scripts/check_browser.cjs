@@ -34,7 +34,7 @@ const {fixture,root}=require('../tests/helpers.js');
     const ui=await browser.newPage();ui.on('pageerror',e=>errors.push(e.message));
     await ui.addInitScript(result=>{
       window.arguments=[{name:'中文测试论文',result,apply:async(headings,overwrite)=>{
-        window.lastApplied={headings,overwrite};return {count:headings.length,backup:'测试备份.pdf'};
+        window.lastApplied={headings,overwrite};return {count:headings.length,output:'测试论文-大纲.pdf',attachmentID:42};
       },open:async()=>{window.opened=true;}}];
     },result);
     await ui.goto(base+'/addon/content/preview.xhtml');await ui.waitForSelector('#rows tr');
