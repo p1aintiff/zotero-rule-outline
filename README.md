@@ -1,8 +1,8 @@
-# Zotero Rule Outline 1.0.1
+# Zotero Rule Outline 1.0.2
 
 Zotero 10 的本地规则 PDF 大纲插件。使用 **PDF.js 5.4.624** 提取文本、字体和页面位置，使用 **pdf-lib 1.17.1** 写入标准 PDF Outline / Bookmarks。无需 Python、PyMuPDF、Node 运行环境或 API Key，不上传论文。
 
-安装包：`dist/zotero-rule-outline-1.0.1.xpi`，约 **2.1 MiB**。JavaScript 引擎、PDF.js 的中文 CMap、标准字体和依赖许可均已打包，安装后无需下载依赖。
+安装包：`dist/zotero-rule-outline-1.0.2.xpi`，约 **2.1 MiB**。JavaScript 引擎、PDF.js 的中文 CMap、标准字体和依赖许可均已打包，安装后无需下载依赖。
 
 提取标题候选后，排除文字相同且跨页纵向位置重复的候选，修复混合字号小数点导致的章节编号拆分，并排除纯符号候选。确认页默认仅勾选数字开头的标题。1.0.1 直接写入原 PDF，保留原 Zotero 附件和批注，不创建第二个附件。旧版 1.0.0 使用副本流程。
 
@@ -87,11 +87,11 @@ Windows 受限环境可追加 `--cache .npm-cache` 指定项目内 npm 缓存。
 
 1. 确认当前分支和准备发布的提交。更新 `addon/manifest.json`、`package.json` 的版本，并运行 `npm install --package-lock-only` 同步锁文件版本；更新 README 中的版本和安装包说明。
 2. 运行 `npm ci`、`npm run typecheck`、`npm run build`、`npm test`，检查改动后提交，将工作流和版本改动推送到 GitHub。
-3. 在准备发布的提交上创建并推送标签。标签必须为 `v` 加清单版本，例如当前 `1.0.1`：
+3. 在准备发布的提交上创建并推送标签。标签必须为 `v` 加清单版本，例如当前 `1.0.2`：
 
    ```sh
-   git tag v1.0.1
-   git push origin v1.0.1
+   git tag v1.0.2
+   git push origin v1.0.2
    ```
 
 4. 在仓库的 [Actions 页面](https://github.com/p1aintiff/zotero-rule-outline/actions) 查看执行结果，成功后从 [Releases 页面](https://github.com/p1aintiff/zotero-rule-outline/releases) 下载 XPI。普通代码推送不会创建 Release。

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zotero Rule Outline",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "本地规则生成中文 PDF 大纲，支持预览编辑、临时备份、原附件写入及批注和同步关系保留。",
   "author": "Rule Outline Contributors",
   "applications": {
