@@ -11,13 +11,13 @@ test('accepts typed arrays from another JavaScript realm, including nonzero-offs
   const updated=await api.writeOutline(foreign,[{title:'跨环境标题',level:1,page:1,y:80}],false);
   assert.equal((await api.inspectOutline(updated,assetBase)).headings[0].title,'跨环境标题');
 });
-test('PDF.js scans larger-font Chinese headings and captions, infers font hierarchy',async()=>{
+test('PDF.js scans Chinese headings and excludes repeated text at the same height',async()=>{
   const {api,assetBase}=await loaded,result=await api.scan(await fixture(),assetBase);
   assert.equal(result.pages,3);assert.equal(result.context.body_font_size,10.5);
   assert.ok(result.headings.some(h=>h.title==='第一章 绪论'));
-  assert.ok(result.headings.some(h=>h.title==='一、研究背景'&&h.level===2));
+  assert.ok(result.headings.every(h=>h.title!=='一、研究背景'));
   assert.ok(result.headings.every(h=>!h.title.includes('Journal')));
-  assert.ok(result.headings.some(h=>h.title.includes('Figure')));
+  assert.ok(result.headings.every(h=>!h.title.includes('Figure')));
   assert.ok(result.headings[0].y>0&&result.headings[0].y<150);
   const extracted=await api.extractLines(await fixture(),assetBase);
   assert.equal(extracted.lines.find(l=>l.text.includes('Figure')).bold,true);

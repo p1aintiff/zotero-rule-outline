@@ -5,9 +5,8 @@ import {openPDF, assertUnsigned, writeOutline} from './pdf.js';
 import type {OutlineHeading} from './types.js';
 export {extractLines} from './extract.js';
 export {inferHierarchy} from './hierarchy.js';
-export {detectBodyFontSize, detectHeadings} from './scanner.js';
+export {detectBodyFontSize, detectHeadings, filterRepeatedHeadings} from './scanner.js';
 export {readingOrder} from './layout.js';
-export {filterPageMargins} from './margins.js';
 export {writeOutline, openPDF, validateHeadings} from './pdf.js';
 
 // Preloaded PDF.js worker handler avoids remote imports and Worker/JAR URL issues.

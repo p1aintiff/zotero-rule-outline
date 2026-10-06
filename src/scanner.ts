@@ -20,9 +20,21 @@ export function detectBodyFontSize(lines: PdfLine[]): number {
 
 export function detectHeadings(lines: PdfLine[], bodyFontSize: number): HeadingCandidate[] {
   // Large punctuation, numeric fragments and equation operators are not titles.
-  return lines.filter(line => /\p{L}/u.test(line.text) && (line.fontSize > bodyFontSize || numberedHeadingLevel(line.text))).map((line, index) => ({
+  return lines.filter(line => /\p{L}/u.test(line.text) && (line.fontSize > bodyFontSize || (line.fontSize >= bodyFontSize && numberedHeadingLevel(line.text)))).map((line, index) => ({
     id: `heading-${line.page}-${index}`, page: line.page, x: line.x, y: line.y,
     text: line.text.trim(), fontSize: line.fontSize, bold: line.bold,
     reasons: line.fontSize > bodyFontSize ? ['字号大于正文'] : ['单行、短文本、数字编号 + 文字'], level: 1, enabled: true,
   }));
+}
+
+export function filterRepeatedHeadings(headings: HeadingCandidate[]): HeadingCandidate[] {
+  const byText = new Map<string, HeadingCandidate[]>();
+  for (const heading of headings) {
+    const text = heading.text.replace(/\s+/g, ' ').trim();
+    const group = byText.get(text) ?? [];
+    group.push(heading);
+    byText.set(text, group);
+  }
+  return headings.filter(heading => !byText.get(heading.text.replace(/\s+/g, ' ').trim())!.some(other =>
+    other.page !== heading.page && Math.abs(other.y - heading.y) <= 3));
 }
